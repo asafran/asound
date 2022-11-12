@@ -18,4 +18,4 @@ set_target_properties( asound
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}../../bin"
 )
 
-target_link_libraries(asound Qt5::Core)
+target_link_libraries(asound Qt6::Core)
