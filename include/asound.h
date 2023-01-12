@@ -21,6 +21,9 @@
 #include <AL/al.h>
 #include <AL/alc.h>
 
+#include <vsg/app/ViewMatrix.h>
+#include <vsg/maths/transform.h>
+
 #include "asound-log.h"
 
 class QFile;
@@ -49,27 +52,52 @@ const float DEF_LSN_ORI[6] = {0.0f, 0.0f, -1.0f, 0.0f, 1.0f, 0.0f};
  * \class AListener
  * \brief Класс, реализующий создание единственного слушателя
  */
-class ASOUNDSHARED_EXPORT AListener
+class ASOUNDSHARED_EXPORT AListener : public QObject
 {   
+    Q_OBJECT
 public:
-    /// Статический метод запрещающий повторное создание экземпляра класса
-    static AListener &getInstance();
+
+    /// Конструктор
+    AListener(QObject *parent = nullptr);
+    AListener(const vsg::vec3 &position, const vsg::vec3 &up, const vsg::vec3 &at, QObject *parent = nullptr);
+
+    virtual ~AListener();
+
+    void makeCurrent();
+
+    template<typename T>
+    void setPosition(const vsg::t_vec3<T> &position)
+    {
+        alListenerfv(AL_POSITION,    static_cast<vsg::vec3>(position).data());
+        checkErrors();
+    }
+
+    template<typename T>
+    void setVelocity(const vsg::t_vec3<T> &velocity)
+    {
+        alListenerfv(AL_VELOCITY,   static_cast<vsg::vec3>(velocity).data());
+        checkErrors();
+    }
+    void setOrientation(const vsg::vec3 &up, const vsg::vec3 &at);
+    void setOrientation(vsg::ref_ptr<vsg::LookAt> lookAt);
+
+    void setPositionOrientation(vsg::ref_ptr<vsg::LookAt> lookAt);
 
     ///
     void closeDevices();
 
-    LogFileHandler *log_;
+signals:
+    void logMsg(QString msg);
 
 private:
-    /// Конструктор (priate!)
-    AListener();
+    void checkErrors();
 
     /// Аудиоустройство
-    ALCdevice* device_;
+    ALCdevice* _device;
 
     /// Контекст OpenAL
-    ALCcontext* context_;
-
+    ALCcontext* _context;
+/*
     /// Положение слушателя
     ALfloat listenerPosition_[3];
 
@@ -77,8 +105,8 @@ private:
     ALfloat listenerVelocity_[3];
 
     /// Направление слушателя
-    ALfloat listenerOrientation_[6];
-
+    std::array<float, 6> _orientation;
+*/
 };
 
 
@@ -86,129 +114,8 @@ private:
 //-----------------------------------------------------------------------------
 // Класс ASound
 //-----------------------------------------------------------------------------
-#pragma pack(push, 1)
-/*!
- * \struct wave_info_header_t
- * \brief Структура для хранения секции RIFF & WAVE файла
- */
-struct wave_info_header_t
-{
-    char            chunkId[4];     ///< ID главного фрагмента "RIFF"
-    uint32_t        chunkSize;      ///< Размер первого фрагмента
-    char            format[4];      ///< Формат "WAVE"
-    wave_info_header_t()
-    {
-        strcpy(chunkId, "");
-        chunkSize = 0;
-        strcpy(format, "");
-    }
-};
-/*!
- * \struct wave_info_t
- * \brief Структура для хранения данных о wav файле
- */
-struct wave_info_fmt_t
-{
 
-    char            subchunk1Id[4]; ///< ID первого подфрагмента "fmt"
-    uint32_t        subchunk1Size;  ///< Размер первого подфрагмента
-    short           audioFormat;    ///< Формат сжатия
-    short           numChannels;    ///< Количество каналов
-    uint32_t        sampleRate;     ///< Частота дискретизации (frequency)
-    uint32_t        byteRate;       ///< Байт в секунду
-    short           bytesPerSample; ///< Байт в одном сэмпле (blockAlign)
-    short           bitsPerSample;  ///< Бит в сэмпле
-// Constructor
-    wave_info_fmt_t()
-    {
-        strcpy(subchunk1Id, "");
-        subchunk1Size = 0;
-        audioFormat = 0;
-        numChannels = 0;
-        sampleRate = 0;
-        byteRate = 0;
-        bytesPerSample = 0;
-        bitsPerSample = 0;
-    }
-};
-
-/*!
- * \struct wave_info_file_data_t
- * \brief Структура для хранения данных "data" WAVE файла
- */
-struct wave_info_file_data_t
-{
-    char            subchunk2Id[4]; ///< ID второго субфрагмента "data"
-    uint32_t        subchunk2Size;  ///< Размер дорожки
-// Constructor
-    wave_info_file_data_t()
-    {
-        strcpy(subchunk2Id, "");
-        subchunk2Size = 0;
-    }
-};
-
-/*!
- * \struct wave_cue_head_t
- * \brief Структура для хранения "шапки" фрагмента CUE
- */
-struct wave_cue_head_t
-{
-    char            cueChunckId[4]; ///< ID фрагмента CUE (4 байта) "0x63756520"
-    uint32_t        cueChunckSize;  ///< Размер фрагмента CUE (4 байта)
-    uint32_t        cueChunckPNum;  ///< Кол-во точек в CUE списке (4 байта)
-// Конструктор
-    wave_cue_head_t()
-    {
-        strcpy(cueChunckId, "");
-        cueChunckSize = 0;
-        cueChunckPNum = 0;
-    }
-};
-
-/*!
- * \struct wave_cue_data_t
- * \brief Структура для хранения данных фрагмента CUE
- */
-struct wave_cue_data_t
-{
-    int32_t         ID;             ///< Уникальный идентификатор cue точки
-    uint32_t        position;       ///< Смещение выборки связанной с точкой cue
-    char            dataChunckId[4];///< "data"
-    uint32_t        chunckStart;    ///< Байтовое смещение в секции списка WAVE
-    uint32_t        blockStart;     ///< Смещение в секции data (начало блока)
-    uint32_t        sampleOffset;   ///< Смещение выборки в секцию data
-// Конструктор
-    wave_cue_data_t()
-    {
-        ID = 0;
-        position = 0;
-        strcpy(dataChunckId, "");
-        chunckStart = 0;
-        blockStart = 0;
-        sampleOffset = 0;
-    }
-};
-
-/*!
- * \struct wave_list_head_t
- * \brief Структура для хранения данных "шапки" фрагмента LIST
- */
-struct wave_list_head_t
-{
-    char            chunckId[4];    ///< "LIST" или "list"
-    uint32_t        dataSize;       ///< Размер фрагмента LIST
-    char            typeID[4];      ///< ID связанного типа данных "adtl"
-// Конструктор
-    wave_list_head_t()
-    {
-        strcpy(chunckId, "");
-        dataSize = 0;
-        strcpy(typeID, "");
-    }
-};
-#pragma pack(pop)
-
+class vsgSound;
 
 /// Скорость воспроизведения источника по умолчанию
 const float DEF_SRC_PITCH = 1.0f;
@@ -439,8 +346,25 @@ private:
 
     /// Подпрограмма очистки контейнеров данных дорожки
     void deleteWAVEDataContainers();
+
+    friend class vsgSound;
 };
 
+class vsgSound : vsg::Inherit<vsg::Object, vsgSound>
+{
+public:
+
+    void read(vsg::Input& input) override;
+    void write(vsg::Output& output) const override;
+
+    ASound      *sound;
+    std::string path;
+    int         initVolume;
+    float       initPitch;
+    bool        loop;
+    bool        autostart;
+    std::map<double,int>    volumeCurve;
+};
 
 
 

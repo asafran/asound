@@ -18,55 +18,80 @@
 //-----------------------------------------------------------------------------
 // КОНСТРУКТОР
 //-----------------------------------------------------------------------------
-AListener::AListener()
+AListener::AListener(QObject *parent)
+    : QObject(parent)
 {
     // Открываем устройство
-    device_ = alcOpenDevice(nullptr);
+    _device = alcOpenDevice(nullptr);
+    checkErrors();
     // Создаём контекст
-    context_ = alcCreateContext(device_, nullptr);
+    _context = alcCreateContext(_device, nullptr);
+    checkErrors();
     // Устанавливаем текущий контекст
-    alcMakeContextCurrent(context_);
-
-    // Инициализируем положение слушателя
-    memcpy(listenerPosition_,    DEF_LSN_POS, 3 * sizeof(float));
-    // Инициализируем вектор "скорости передвижения" слушателя
-    memcpy(listenerVelocity_,    DEF_LSN_VEL, 3 * sizeof(float));
-    // Инициализируем векторы направления слушателя
-    memcpy(listenerOrientation_, DEF_LSN_ORI, 6 * sizeof(float));
-
-    // Устанавливаем положение слушателя
-    alListenerfv(AL_POSITION,    listenerPosition_);
-    // Устанавливаем скорость слушателя
-    alListenerfv(AL_VELOCITY,    listenerVelocity_);
-    // Устанавливаем направление слушателя
-    alListenerfv(AL_ORIENTATION, listenerOrientation_);
-
-    log_ = new LogFileHandler("asound.log");
-
+    //makeCurrent();
 }
 
-
-
-//-----------------------------------------------------------------------------
-//
-//-----------------------------------------------------------------------------
-AListener& AListener::getInstance()
+AListener::AListener(const vsg::vec3 &position, const vsg::vec3 &up, const vsg::vec3 &at, QObject *parent)
+    : AListener(parent)
 {
-    // Создаем статичный экземпляр класса
-    static AListener instance;
-    // Возвращаем его при каждом вызове метода
-    return instance;
+    vsg::vec3 velocity(0.0f, 0.0f, 0.0f);
+    // Устанавливаем положение слушателя
+    setPosition(position);
+    // Устанавливаем скорость слушателя
+    setVelocity(vsg::vec3{0.0f, 0.0f, 0.0f});
+    // Устанавливаем направление слушателя
+    setOrientation(up, at);
+}
+
+AListener::~AListener()
+{
+    closeDevices();
+}
+
+void AListener::makeCurrent()
+{
+    alcMakeContextCurrent(_context);
+    checkErrors();
 }
 
 
+
+
+
+void AListener::setOrientation(const vsg::vec3 &up, const vsg::vec3 &at)
+{
+    std::array<float, 6> orientation = {at.x, at.y, at.z,
+                                         up.x, up.y, up.z};
+
+    alListenerfv(AL_ORIENTATION, orientation.data());
+    checkErrors();
+}
+
+void AListener::setOrientation(vsg::ref_ptr<vsg::LookAt> lookAt)
+{
+    setOrientation(static_cast<vsg::vec3>(lookAt->up), static_cast<vsg::vec3>(lookAt->center));
+}
+
+void AListener::setPositionOrientation(vsg::ref_ptr<vsg::LookAt> lookAt)
+{
+    setPosition(lookAt->eye);
+    setOrientation(lookAt);
+}
 
 //-----------------------------------------------------------------------------
 //
 //-----------------------------------------------------------------------------
 void AListener::closeDevices()
 {
-    alcDestroyContext(context_);
-    alcCloseDevice(device_);
+    alcDestroyContext(_context);
+    alcCloseDevice(_device);
+}
+
+void AListener::checkErrors()
+{
+    ALenum error = alGetError();
+    if(error != ALC_NO_ERROR)
+        emit logMsg(QString("ASound error! OpelAL code:") + QString::number(error));
 }
 
 
