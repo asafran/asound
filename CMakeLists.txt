@@ -4,6 +4,13 @@ file(GLOB SOURCES
 )
 
 find_package(OpenAL REQUIRED)
+find_package(OpusFile CONFIG)
+if(NOT TARGET OpusFile::opusfile)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(OpusFile REQUIRED IMPORTED_TARGET opusfile)
+  set_target_properties(PkgConfig::OpusFile PROPERTIES IMPORTED_GLOBAL TRUE)
+  add_library(OpusFile::opusfile ALIAS PkgConfig::OpusFile)
+endif()
 
 add_library(asound ${SOURCES})
 
@@ -18,4 +25,4 @@ set_target_properties( asound
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}../../bin"
 )
 
-target_link_libraries(asound Qt6::Core)
+target_link_libraries(asound filesystem tools Qt6::Core OpusFile::opusfile)

@@ -24,7 +24,9 @@
 #include <vsg/app/ViewMatrix.h>
 #include <vsg/maths/transform.h>
 
-#include "asound-log.h"
+#include "Journal.h"
+
+#include <opusfile.h>
 
 class QFile;
 class QTimer;
@@ -42,11 +44,21 @@ class QTimer;
 // Класс AListener
 //-----------------------------------------------------------------------------
 /// Положение слушателя по умолчанию
-const float DEF_LSN_POS[3] = {0.0f, 0.0f, 0.0f};
+//const float DEF_LSN_POS[3] = {0.0f, 0.0f, 0.0f};
 /// "Скорость передвижения" слушателя по умолчанию
-const float DEF_LSN_VEL[3] = {0.0f, 0.0f, 0.0f};
+//const float DEF_LSN_VEL[3] = {0.0f, 0.0f, 0.0f};
 /// Направление слушателя по умолчанию
-const float DEF_LSN_ORI[6] = {0.0f, 0.0f, -1.0f, 0.0f, 1.0f, 0.0f};
+//const float DEF_LSN_ORI[6] = {0.0f, 0.0f, -1.0f, 0.0f, 1.0f, 0.0f};
+
+static void checkAlErrors(QString msg)
+{
+    //Journal::instance()->debug("ASound: " + msg);
+    ALenum error = alGetError();
+    if(error != ALC_NO_ERROR)
+        Journal::instance()->error("OpenAL error: " + QString::number(error));
+}
+
+constexpr int OPUS_DECODE_SAPLE_RATE = 48000;
 
 /*!
  * \class AListener
@@ -115,22 +127,32 @@ private:
 // Класс ASound
 //-----------------------------------------------------------------------------
 
+class ABuffer : public vsg::Inherit<vsg::Object, ABuffer>
+{
+public:
+    ABuffer();
+    virtual ~ABuffer();
+
+    static vsg::ref_ptr<ABuffer> loadFull(const std::string &path);
+    static vsg::ref_ptr<ABuffer> loadStreamed(const std::string &path, size_t dynBuffers, int bufferSize);
+
+    int loadBlock(ALuint to);
+    void initStream();
+
+    std::chrono::milliseconds getDuration() const;
+
+    bool streamed() const;
+
+    // Буфер OpenAL
+    std::vector<ALuint> buffers;
+    int bufferSize = 200000;
+
+private:
+    // Ogg файл, null если буфер статический
+    OggOpusFile *_file = nullptr;
+};
+
 class vsgSound;
-
-/// Скорость воспроизведения источника по умолчанию
-const float DEF_SRC_PITCH = 1.0f;
-
-/// Минимальная громкость источника
-const int MIN_SRC_VOLUME  = 0;
-/// Громкость источника по умолчанию
-const int DEF_SRC_VOLUME  = 100;
-/// Максимальная громкость источника
-const int MAX_SRC_VOLUME  = 100;
-
-/// Положение источника по умолчанию
-const float DEF_SRC_POS[3] = {0.0f, 0.0f, 1.0f};
-/// "Скорость передвижения" источника по умолчанию
-const float DEF_SRC_VEL[3] = {0.0f, 0.0f, 0.0f};
 
 /*!
  * \class ASound
@@ -147,65 +169,76 @@ public:
      * \brief Конструктор
      * \param soundname - имя аудиофайла
      */
-    ASound(QString soundname, QObject* parent = Q_NULLPTR);
+    explicit ASound(QObject* parent = Q_NULLPTR);
     /// Деструктор
-    ~ASound();
-
-    /// Вернуть громкость
-    int getVolume();
-
-    /// Вернуть скорость воспроизведения
-    float getPitch();
-
-    /// Вернуть флаг зацикливания
-    bool getLoop();
-
-    /// Вернуть положение источника
-    void getPosition(float &x, float &y, float &z);
-
-    /// Вернуть "скорость передвижения" источника
-    void getVelocity(float &x, float &y, float &z);
-
-    /// Вернуть последнюю ошибку
-    QString getLastError();
+    virtual ~ASound();
 
     /// Играет ли звук
-    bool isPlaying();
+    bool isPlaying() const;
 
     /// Остановлен ли звук
-    bool isStopped();
+    bool isStopped() const;
 
     /// Приостановлен ли звук
-    bool isPaused();
+    bool isPaused() const;
+
+    /// Играет ли звук в цикле
+    bool isLooped() const;
 
     /// Длительность звука в секундах
-    int getDuration();
+    std::chrono::milliseconds getDuration() const;
 
-    void setLastError(const std::string& value)
-    {
-        LastError_ = "E - " + QString::fromStdString(value);
-        emit lastErrorChanged_(value);
-    }
+    std::string soundName; ///< Имя файла
 
+    std::map<double,int>    volumeCurve;
+
+    vsg::ref_ptr<ABuffer> buffer() const;
+    void setBuffer(vsg::ref_ptr<ABuffer> newBuffer);
+    float volume() const;
+    float minimumVolume() const;
+    void setMinimumVolume(float newMinimumVolume);
+    float maximumVolume() const;
+    void setMaximumVolume(float newMaximumVolume);
+    void setRealativeVolume(float newRealativeVolume);
+    float pitch() const;
+
+    float maxDistance() const;
+    void setMaxDistance(float newMaxDistance);
+    float rolloff() const;
+    void setRolloff(float newNrolloff);
+    float refDistance() const;
+    void setRefDistance(float newNrefDistance);
+    float coneOuterVolume() const;
+    void setConeOuterVolume(float newConeOuterVolume);
+    float coneInnerVolume() const;
+    void setConeInnerVolume(float newConeInnerVolume);
+    const vsg::vec3 &position() const;
+    const vsg::vec3 &velocity() const;
+    const vsg::vec3 &direction() const;
+    int coneAngle() const;
+    void setConeAngle(int newConeAngle);
 
 public slots:
     /// Установить громкость
-    void setVolume(int volume = 100);
+    void setVolume(float volume);
 
     /// Установить скорости воспроизведения
     void setPitch(float pitch);
 
-    /// Установить зацикливание
-    void setLoop(bool loop);
-
     /// Установить положение
-    void setPosition(float x, float y, float z);
+    void setPosition(const vsg::vec3 &pos);
+
+    /// Установить направление
+    void setDirection(const vsg::vec3 &dir);
 
     /// Установить "скорость передвижения"
-    void setVelocity(float x, float y, float z);
+    void setVelocity(const vsg::vec3 &vel);
 
     /// Играть звук
     void play();
+
+    /// Играть в цикле
+    void playLooped();
 
     /// Приостановить звук
     void pause();
@@ -213,144 +246,57 @@ public slots:
     /// Остановить звук
     void stop();
 
-signals:
+    /// Завершить звук
+    void end();
 
-    void lastErrorChanged_(const std::string);
-
-    void notify(const std::string msg);
-
-
-private slots:
-    /// Слот обработки таймера уничтожения у звука блока старта
-    void onTimerStartKiller();
-
+protected:
+    void timerEvent(QTimerEvent *event) override;
 
 private:
 
-    // Можно продолжать работу с файлом
-    bool canDo_; ///< Флаг допуска к работе с файлом
+    vsg::ref_ptr<ABuffer> _buffer; /// Буффер OpenAL
 
-    // Можно играть звук
-    bool canPlay_; ///< Флаг допуска к воспроизведению звука
+    ALuint  _source; ///< Источник OpenAL
 
-    // Имеет-ли файл секцию CUE
-    bool canCUE_; ///< Флаг наличия фрагмента CUE
+    float _volume = 1.0f; ///< Громкость
 
-    // Имеет-ли файл секцию LABL
-    bool canLABL_; ///< Флаг наличия меток в файле
+    float _minimumVolume = 0.0f; ///< Минимальная громкость
 
-    // Размер чанка блока date при квази-потоковом воспроизведении
-    ALsizei DATA_CHUNK_SIZE;
+    float _maximumVolume = 1.0f; ///< Максимальная громкость
 
-    // Имя звука
-    QString soundName_; ///< Имя файла
+    float _relativeVolume = 1.0f; ///< Регулировка
 
-    // Последняя ошибка
-    QString lastError_; ///< Текс последней ошибки
+    float _pitch = 1.0f; ///< Скорость воспроизведения
 
-    // Переменная для хранения файла
-    QFile* file_; ///< Контейнер файла
+    bool _looped = false; ///< Флаг зацикливания
 
-    // Информация формата входного звукового файла
-    wave_info_header_t wave_info_header_; ///< Структура информации формата файла [RIFF&&WAVE]
+    float _maxDistance = 10.0f; ///< Максимальное расстояние, на которое распространяется звук
 
-    // Информация о файле .wav
-    wave_info_fmt_t wave_info_; ///< Структура информации о файле
+    float _rolloff = 1.0f; ///< Распространение звука в пространстве
 
-    // Секция data в WAVE файле
-    wave_info_file_data_t wave_info_file_data_; ///< Структура информации секции data
+    float _refDistance = 5.0f; ///< Расстояние на котором громкость звука будет составлять половину от нормальной
 
-    // "шапка" списка CUE
-    wave_cue_head_t cue_head_; ///< Структура "шапка" CUE
+    float _coneOuterVolume = 0.3f; ///< Громкость за пределами направления звука
 
-    // Список меток CUE
-    QList <wave_cue_data_t>cue_data_; ///< Структура информации списка CUE
+    float _coneInnerVolume = 1.0f; ///< Громкость "внутри" звука
 
-    // "шапка" списка меток
-    wave_list_head_t list_head_; ///< Структура "шапка" LIST
+    int _coneAngle = 360; ///< Угол звука
 
-    // Список меток labels (имя, смещение в секции data)
-    QMap<QString, uint64_t> wave_labels_; ///< Список меток
+    vsg::vec3 _position; ///< Положение источника
 
-    // Хранилище для data секции (самой музыки) файла .wav
-    unsigned char* wavData_[BUFFER_BLOCKS]; ///< Контейнер секций блока данных файла wav
+    vsg::vec3 _velocity; ///< "Скорость передвижения" источника
 
-    // Размер каждого из 3-х блоков данных фай
-    uint64_t blockSize_[BUFFER_BLOCKS]; ///< Размер блоков данных файла wav
-
-    // Буфер OpenAL
-    ALuint  buffer_[BUFFER_BLOCKS]; ///< Буфер OpenAL 3 секции (старт, цикл, остановка)
-
-    // Источник OpenAL
-    ALuint  source_; ///< Источник OpenAL
-
-    // Формат аудио (mono8/16 - stereo8/16) OpenAL
-    ALenum  format_; ///< Формат аудио (mono8/16 - stereo8/16) OpenAL
-
-    // Громкость
-    int sourceVolume_; ///< Громкость
-
-    // Скорости воспроизведения
-    ALfloat sourcePitch_; ///< Скорость воспроизведения
-
-    // Флаг зацикливания
-    bool sourceLoop_; ///< Флаг зацикливания
-
-    // Положение источника
-    ALfloat sourcePosition_[3]; ///< Положение источника
-
-    // "Скорость передвижения" источника
-    ALfloat sourceVelocity_[3]; ///< "Скорость передвижения" источника
-
-    /// Таймер для стирания в звуке блока старта
-    QTimer* timerStartKiller_;
-
-    /// Last error in asound
-    QString LastError_;
-
-    /// Полная подготовка файла
-    void loadSound_(QString soundname);
-
-    /// Загрузка файла (в т.ч. из ресурсов)
-    void loadFile_(QString soundname);
-
-    /// Чтение информации о файле .wav
-    void readWaveInfo_();
-
-    /// Чтение формата файла
-    void readWaveHeader_();
-
-    /// Чтение данных формата и секции data
-    void readWaveFmtData_(QByteArray arr);
-
-    /// Чтение фрагмента LIST ("шапки")
-    void readWaveListChunckHeader_(QByteArray &baseStr);
-
-    /// Определение формата аудио (mono8/16 - stereo8/16)
-    void defineFormat_();
-
-    /// Получение CUE фрагмента
-    void getCUE_(QByteArray &baseStr);
-
-    /// Получение списка меток (Labels)
-    void getLabels_(QByteArray &baseStr);
-
-    /// Генерация буфера и источника
-    void generateStuff_();
+    vsg::vec3 _direction; ///< Направление звука
 
     /// Настройка источника
-    void configureSource_();
+    void configureSource();
 
-    /// Метод проверки необходимых параметров
-    void checkValue(std::string baseStr, const char targStr[], QString err);
-
-    /// Подпрограмма очистки контейнеров данных дорожки
-    void deleteWAVEDataContainers();
+    void requeueBuffers();
 
     friend class vsgSound;
 };
 
-class vsgSound : vsg::Inherit<vsg::Object, vsgSound>
+class vsgSound : public vsg::Inherit<vsg::Object, vsgSound>
 {
 public:
 
@@ -358,12 +304,6 @@ public:
     void write(vsg::Output& output) const override;
 
     ASound      *sound;
-    std::string path;
-    int         initVolume;
-    float       initPitch;
-    bool        loop;
-    bool        autostart;
-    std::map<double,int>    volumeCurve;
 };
 
 
@@ -387,6 +327,7 @@ public:
  * \brief Класс управления очередью запуска звуков
  * \class ASoundController
  */
+/*
 class ASOUNDSHARED_EXPORT ASoundController : public QObject
 {
     Q_OBJECT
@@ -472,5 +413,5 @@ private:
     /// Очистить список фаз процесса работы
     void clearRunningSoundsList_();
 };
-
+*/
 #endif // ASOUND_H
