@@ -93,6 +93,11 @@ void AListener::closeDevices()
     alcCloseDevice(_device);
 }
 
+void AListener::setThreadCurrent()
+{
+    alcSetThreadContext(_context);
+}
+
 void AListener::checkErrors()
 {
     ALenum error = alGetError();
@@ -130,6 +135,7 @@ ASound::~ASound()
 //-----------------------------------------------------------------------------
 void ASound::configureSource()
 {
+    alSourcei(_source, AL_BUFFER, _buffer->buffer);
     alSourcef(_source, AL_GAIN, _relativeVolume * _volume);
     alSourcef(_source, AL_MIN_GAIN, _minimumVolume);
     alSourcef(_source, AL_MAX_GAIN, _maximumVolume);
@@ -145,31 +151,6 @@ void ASound::configureSource()
     alSourcefv(_source, AL_DIRECTION, _direction.data());
     alSourcefv(_source, AL_VELOCITY, _velocity.data());
 }
-
-void ASound::requeueBuffers()
-{
-    alSourcei(_source, AL_LOOPING, AL_FALSE);
-    checkAlErrors("Disable looping");
-    alSourceStop(_source);
-    alSourcei(_source, AL_BUFFER, AL_NONE);
-    checkAlErrors("Detach all buffers");
-
-    if(_buffer->streamed())
-    {
-        _buffer->initStream();
-        alSourceQueueBuffers(_source, _buffer->buffers.size(), _buffer->buffers.data());
-        checkAlErrors("Update dynamic buffer");
-    }
-    else
-    {
-        auto buffers = _looped ? std::min(_buffer->buffers.size(), static_cast<size_t>(2)) : _buffer->buffers.size();
-        alSourceQueueBuffers(_source, buffers, _buffer->buffers.data());
-        if(_looped)
-            alSourcei(_source, AL_LOOPING, AL_TRUE);
-        checkAlErrors("Setup buffers");
-    }
-}
-
 
 
 //-----------------------------------------------------------------------------
@@ -232,19 +213,14 @@ void ASound::setVelocity(const vsg::vec3 &vel)
 //-----------------------------------------------------------------------------
 // (слот) Играть звук
 //-----------------------------------------------------------------------------
-void ASound::play()
+void ASound::play(bool looped)
 {
     if(isPlaying())
         return;
 
-    requeueBuffers();
+    alSourcei(_source, AL_LOOPING, looped ? AL_TRUE : AL_FALSE);
     alSourcePlay(_source);
-}
-
-void ASound::playLooped()
-{
-    _looped = true;
-    play();
+    checkAlErrors("Play sound");
 }
 
 //-----------------------------------------------------------------------------
@@ -255,15 +231,17 @@ void ASound::pause()
     alSourcePause(_source);
 }
 
-
-
 //-----------------------------------------------------------------------------
 // (слот) Остановить звук
 //-----------------------------------------------------------------------------
 void ASound::stop()
 {
-    _looped = false;
     alSourceStop(_source);
+}
+
+void ASound::end()
+{
+    alSourcei(_source, AL_LOOPING, AL_FALSE);
 }
 
 
@@ -299,24 +277,6 @@ bool ASound::isStopped() const
     return(state == AL_STOPPED);
 }
 
-void ASound::timerEvent(QTimerEvent *event)
-{
-    int processed = 0;
-    alGetSourcei(_source, AL_BUFFERS_PROCESSED, &processed);
-    unsigned int buffer = 0;
-
-    while (processed--)
-    {
-        alSourceUnqueueBuffers(_source, 1, &buffer);
-        checkAlErrors("Update dynamic buffer");
-        auto loaded = _buffer->loadBlock(buffer);
-        if(loaded <= 0)
-            return;
-        alSourceQueueBuffers(_source, 1, &buffer);
-        checkAlErrors("Queue new buffer");
-    }
-}
-
 vsg::ref_ptr<ABuffer> ASound::buffer() const
 {
     return _buffer;
@@ -326,7 +286,8 @@ void ASound::setBuffer(vsg::ref_ptr<ABuffer> newBuffer)
 {
     stop();
     _buffer = newBuffer;
-    requeueBuffers();
+    alSourcei(_source, AL_BUFFER, _buffer->buffer);
+    checkAlErrors("Set new buffer");
 }
 
 float ASound::volume() const
@@ -369,7 +330,9 @@ float ASound::pitch() const
 
 bool ASound::isLooped() const
 {
-    return _looped;
+    ALint looped;
+    alGetSourcei(_source, AL_LOOPING, &looped);
+    return(looped == AL_TRUE);
 }
 
 float ASound::maxDistance() const
@@ -773,14 +736,10 @@ void vsgSound::read(vsg::Input &input)
 
     bool streamed = false;
     input.read("streamed", streamed);
-    int size = 200000;
-    input.read("dynBuffSize", size);
-    int count = 0;
-    input.read("dynBuffs", count);
 
     if(streamed)
     {
-        sound->_buffer = ABuffer::loadStreamed(sound->soundName, count, size);
+        sound->_buffer = ABuffer::loadStreamed(sound->soundName);
     }
     else
     {
@@ -814,9 +773,6 @@ void vsgSound::write(vsg::Output &output) const
     output.write("name", sound->soundName);
     bool streamed = sound->_buffer->streamed();
     output.write("streamed", streamed);
-    output.write("dynBuffSize", sound->_buffer->bufferSize);
-    auto size = sound->_buffer->buffers.size();
-    output.write("dynBuffs", size);
     output.write("vol", sound->_volume);
     output.write("minVol", sound->_minimumVolume);
     output.write("maxVol", sound->_maximumVolume);
@@ -834,11 +790,15 @@ void vsgSound::write(vsg::Output &output) const
 }
 
 
-ABuffer::ABuffer() : vsg::Inherit<vsg::Object, ABuffer>() {}
+ABuffer::ABuffer() : vsg::Inherit<vsg::Object, ABuffer>()
+{
+    alGenBuffers(1, &buffer);
+    checkAlErrors("Generating buffer");
+}
 
 ABuffer::~ABuffer()
 {
-    alDeleteBuffers(buffers.size(), buffers.data());
+    alDeleteBuffers(1, &buffer);
     if(_file) op_free(_file);
 }
 
@@ -856,31 +816,36 @@ vsg::ref_ptr<ABuffer> ABuffer::loadFull(const std::string &path)
 
     int links = op_link_count(file);
 
-    buf->buffers.resize(links);
-    alGenBuffers(links, buf->buffers.data());
-    checkAlErrors("Generating buffers");
-
+    std::vector<ALint> blocks;
+    ALint offset = 0;
     for (int li = 0; li < links; ++li) {
         auto channels = op_channel_count(file, li);
         if(channels > 1)
             throw LoadException(QString("Failed to load %1 sound, stereo sound not allowed").arg(pathToFile.c_str()));
-        auto total = op_pcm_total(file, li);
-        opus_int16 *pcm = new opus_int16[total];
-
-        error = op_read(file, pcm, total, nullptr);
-        if(error < 0)
-            throw LoadException(QString("Failed to load pcm %1 sound").arg(pathToFile.c_str()));
-
-        alBufferData(buf->buffers.at(li), AL_FORMAT_MONO16, pcm, total, OPUS_DECODE_SAPLE_RATE);
-        checkAlErrors("Fill buffer data");
-
-        delete [] pcm;
+        offset += op_raw_total(file, li);
+        blocks.at(li) = offset;
     }
 
+    auto total = op_pcm_total(file, -1);
+    opus_int16 *pcm = new opus_int16[total];
+    error = op_read(file, pcm, total, nullptr);
+    if(error < 0)
+        throw LoadException(QString("Failed to load pcm %1 sound").arg(pathToFile.c_str()));
+
+    alBufferData(buf->buffer, AL_FORMAT_MONO16, pcm, total, OPUS_DECODE_SAPLE_RATE);
+    checkAlErrors("Fill buffer data");
+
+    if(links == 3)
+    {
+        alBufferiv(buf->buffer, AL_LOOP_POINTS_SOFT, blocks.data());
+        checkAlErrors("Set looping points");
+    }
+
+    delete [] pcm;
     op_free(file);
 }
 
-vsg::ref_ptr<ABuffer> ABuffer::loadStreamed(const std::string &path, size_t dynBuffers, int bufferSize)
+vsg::ref_ptr<ABuffer> ABuffer::loadStreamed(const std::string &path)
 {
     auto buf = ABuffer::create();
 
@@ -892,18 +857,26 @@ vsg::ref_ptr<ABuffer> ABuffer::loadStreamed(const std::string &path, size_t dynB
     if(error < 0)
         throw LoadException(QString("Failed to load %1 sound").arg(pathToFile.c_str()));
 
-    buf->buffers.resize(dynBuffers);
-    alGenBuffers(dynBuffers, buf->buffers.data());
-    checkAlErrors("Generating buffers");
-
     int links = op_link_count(buf->_file);
     for (int li = 0; li < links; ++li) {
         auto channels = op_channel_count(buf->_file, li);
         if(channels > 1)
             throw LoadException(QString("Failed to load %1 sound, stereo sound not allowed").arg(pathToFile.c_str()));
     }
+    auto callback = [](ALvoid *userptr, ALvoid *sampleData, ALsizei numbytes)
+            -> ALsizei
+    {
+        auto samples = numbytes / sizeof(opus_int16);
+        auto file = static_cast<OggOpusFile*>(sampleData);
+        if(!file)
+            return 0;
+        auto written = op_read(file, static_cast<short*>(sampleData), samples, NULL);
+        written *= sizeof(opus_int16);
+        return std::max(static_cast<ALsizei>(written), 0);
+    };
+    alBufferCallbackSOFT(buf->buffer, AL_FORMAT_MONO16, OPUS_DECODE_SAPLE_RATE, callback, buf->_file);
 }
-
+/*
 int ABuffer::loadBlock(ALuint to)
 {
     if(!_file)
@@ -920,15 +893,7 @@ int ABuffer::loadBlock(ALuint to)
     delete [] pcm;
     return samples;
 }
-
-void ABuffer::initStream()
-{
-    op_raw_seek(_file, 0);
-    for (auto albuffer : buffers) {
-        loadBlock(albuffer);
-    }
-}
-
+*/
 std::chrono::milliseconds ABuffer::getDuration() const
 {
     auto total = op_pcm_total(_file, -1);

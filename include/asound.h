@@ -18,8 +18,8 @@
 
 #include <QObject>
 #include <QMap>
-#include <AL/al.h>
-#include <AL/alc.h>
+#define AL_ALEXT_PROTOTYPES
+#include <AL/alext.h>
 
 #include <vsg/app/ViewMatrix.h>
 #include <vsg/maths/transform.h>
@@ -36,8 +36,6 @@ class QTimer;
 #else
 #  define ASOUNDSHARED_EXPORT Q_DECL_IMPORT
 #endif
-
-#define BUFFER_BLOCKS 3
 
 
 //-----------------------------------------------------------------------------
@@ -98,6 +96,9 @@ public:
     ///
     void closeDevices();
 
+public slots:
+    void makeThreadCurrent();
+
 signals:
     void logMsg(QString msg);
 
@@ -134,18 +135,16 @@ public:
     virtual ~ABuffer();
 
     static vsg::ref_ptr<ABuffer> loadFull(const std::string &path);
-    static vsg::ref_ptr<ABuffer> loadStreamed(const std::string &path, size_t dynBuffers, int bufferSize);
+    static vsg::ref_ptr<ABuffer> loadStreamed(const std::string &path);
 
-    int loadBlock(ALuint to);
-    void initStream();
+    //int loadBlock(ALuint to);
 
     std::chrono::milliseconds getDuration() const;
 
     bool streamed() const;
 
     // Буфер OpenAL
-    std::vector<ALuint> buffers;
-    int bufferSize = 200000;
+    ALuint buffer;
 
 private:
     // Ogg файл, null если буфер статический
@@ -235,10 +234,7 @@ public slots:
     void setVelocity(const vsg::vec3 &vel);
 
     /// Играть звук
-    void play();
-
-    /// Играть в цикле
-    void playLooped();
+    void play(bool looped = false);
 
     /// Приостановить звук
     void pause();
@@ -248,9 +244,6 @@ public slots:
 
     /// Завершить звук
     void end();
-
-protected:
-    void timerEvent(QTimerEvent *event) override;
 
 private:
 
@@ -267,8 +260,6 @@ private:
     float _relativeVolume = 1.0f; ///< Регулировка
 
     float _pitch = 1.0f; ///< Скорость воспроизведения
-
-    bool _looped = false; ///< Флаг зацикливания
 
     float _maxDistance = 10.0f; ///< Максимальное расстояние, на которое распространяется звук
 
@@ -291,8 +282,6 @@ private:
     /// Настройка источника
     void configureSource();
 
-    void requeueBuffers();
-
     friend class vsgSound;
 };
 
@@ -303,7 +292,7 @@ public:
     void read(vsg::Input& input) override;
     void write(vsg::Output& output) const override;
 
-    ASound      *sound;
+    ASound *sound = nullptr;
 };
 
 
