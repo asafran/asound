@@ -25,4 +25,4 @@ set_target_properties( asound
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}../../bin"
 )
 
-target_link_libraries(asound filesystem tools Qt6::Core OpusFile::opusfile)
+target_link_libraries(asound filesystem tools Journal Qt6::Core OpusFile::opusfile)

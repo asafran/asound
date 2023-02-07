@@ -79,14 +79,14 @@ public:
     void setPosition(const vsg::t_vec3<T> &position)
     {
         alListenerfv(AL_POSITION,    static_cast<vsg::vec3>(position).data());
-        checkErrors();
+        checkAlErrors("Set position");
     }
 
     template<typename T>
     void setVelocity(const vsg::t_vec3<T> &velocity)
     {
         alListenerfv(AL_VELOCITY,   static_cast<vsg::vec3>(velocity).data());
-        checkErrors();
+        checkAlErrors("Set velocity");
     }
     void setOrientation(const vsg::vec3 &up, const vsg::vec3 &at);
     void setOrientation(vsg::ref_ptr<vsg::LookAt> lookAt);
@@ -99,11 +99,7 @@ public:
 public slots:
     void makeThreadCurrent();
 
-signals:
-    void logMsg(QString msg);
-
 private:
-    void checkErrors();
 
     /// Аудиоустройство
     ALCdevice* _device;
@@ -162,7 +158,6 @@ class vsgSound;
 class ASOUNDSHARED_EXPORT ASound : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(std::string lastError_ WRITE setLastError NOTIFY lastErrorChanged_)
 public:
     /*!
      * \brief Конструктор
@@ -234,7 +229,10 @@ public slots:
     void setVelocity(const vsg::vec3 &vel);
 
     /// Играть звук
-    void play(bool looped = false);
+    void play();
+
+    /// Играть звук в цикле
+    void playLooped();
 
     /// Приостановить звук
     void pause();

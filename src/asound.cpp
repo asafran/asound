@@ -29,10 +29,10 @@ AListener::AListener(QObject *parent)
 {
     // Открываем устройство
     _device = alcOpenDevice(nullptr);
-    checkErrors();
+    checkAlErrors("Open device");
     // Создаём контекст
     _context = alcCreateContext(_device, nullptr);
-    checkErrors();
+    checkAlErrors("Create context");
     // Устанавливаем текущий контекст
     //makeCurrent();
 }
@@ -57,7 +57,7 @@ AListener::~AListener()
 void AListener::makeCurrent()
 {
     alcMakeContextCurrent(_context);
-    checkErrors();
+    checkAlErrors("Make process-wide current context");
 }
 
 
@@ -70,7 +70,7 @@ void AListener::setOrientation(const vsg::vec3 &up, const vsg::vec3 &at)
                                          up.x, up.y, up.z};
 
     alListenerfv(AL_ORIENTATION, orientation.data());
-    checkErrors();
+    checkAlErrors("Set orientation");
 }
 
 void AListener::setOrientation(vsg::ref_ptr<vsg::LookAt> lookAt)
@@ -93,16 +93,10 @@ void AListener::closeDevices()
     alcCloseDevice(_device);
 }
 
-void AListener::setThreadCurrent()
+void AListener::makeThreadCurrent()
 {
     alcSetThreadContext(_context);
-}
-
-void AListener::checkErrors()
-{
-    ALenum error = alGetError();
-    if(error != ALC_NO_ERROR)
-        emit logMsg(QString("ASound error! OpelAL code:") + QString::number(error));
+    checkAlErrors("Make thread current context");
 }
 
 
@@ -213,12 +207,22 @@ void ASound::setVelocity(const vsg::vec3 &vel)
 //-----------------------------------------------------------------------------
 // (слот) Играть звук
 //-----------------------------------------------------------------------------
-void ASound::play(bool looped)
+void ASound::play()
 {
     if(isPlaying())
         return;
 
-    alSourcei(_source, AL_LOOPING, looped ? AL_TRUE : AL_FALSE);
+    alSourcei(_source, AL_LOOPING, AL_FALSE);
+    alSourcePlay(_source);
+    checkAlErrors("Play sound");
+}
+
+void ASound::playLooped()
+{
+    if(isPlaying())
+        return;
+
+    alSourcei(_source, AL_LOOPING, AL_TRUE);
     alSourcePlay(_source);
     checkAlErrors("Play sound");
 }
@@ -843,6 +847,8 @@ vsg::ref_ptr<ABuffer> ABuffer::loadFull(const std::string &path)
 
     delete [] pcm;
     op_free(file);
+
+    return buf;
 }
 
 vsg::ref_ptr<ABuffer> ABuffer::loadStreamed(const std::string &path)
@@ -875,6 +881,8 @@ vsg::ref_ptr<ABuffer> ABuffer::loadStreamed(const std::string &path)
         return std::max(static_cast<ALsizei>(written), 0);
     };
     alBufferCallbackSOFT(buf->buffer, AL_FORMAT_MONO16, OPUS_DECODE_SAPLE_RATE, callback, buf->_file);
+
+    return buf;
 }
 /*
 int ABuffer::loadBlock(ALuint to)
